@@ -14,7 +14,7 @@ export function PerformanceMonitor() {
 
       if (now >= lastTime + 1000) {
         setFps(Math.round((frameCount * 1000) / (now - lastTime)));
-        setMemory(Math.round((performance as any).memory?.usedJSHeapSize / (1024 * 1024) || 0));
+        setMemory(Math.round((performance as Performance).memory?.usedJSHeapSize / (1024 * 1024) || 0));
         frameCount = 0;
         lastTime = now;
       }
@@ -26,7 +26,7 @@ export function PerformanceMonitor() {
   }, []);
 
   return (
-    <div>
+    <div className="absolute top-0 right-0">
       <p>FPS: {fps}</p>
       <p>Memory: {memory} MB</p>
     </div>

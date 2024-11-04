@@ -1,10 +1,15 @@
 export function generateVertices(count: number): Float32Array {
   const vertices = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    const index = i * 3;
-    vertices[index] = Math.random() * 2000 - 1000; // x
-    vertices[index + 1] = Math.random() * 2000 - 1000; // y
-    vertices[index + 2] = Math.random() * 2000 - 1000; // z
+
+  function random(seed: number): number {
+    return Math.abs((Math.sin(seed) * 43758.5453) % 1);
   }
+
+  for (let i = 0; i < count; i++) {
+    vertices[i * 3] = Math.sin(random(i + 0.0)) * 2000.0 - 1000.0;
+    vertices[i * 3 + 1] = Math.sin(random(i + 1.0)) * 2000.0 - 1000.0;
+    vertices[i * 3 + 2] = Math.sin(random(i + 2.0)) * 2000.0 - 1000.0;
+  }
+
   return vertices;
 }

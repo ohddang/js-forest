@@ -1,6 +1,7 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect } from "react";
 import * as THREE from "three";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { PerformanceMonitor } from "./PerformanceMonitor";
 
 interface WebGPUVertexVisualizationProps {
   vertexCount: number;
@@ -8,8 +9,14 @@ interface WebGPUVertexVisualizationProps {
 
 function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
   const meshRef = useRef<THREE.Points>(null);
-  const [device, setDevice] = useState<GPUDevice | null>(null);
-  const [vertexBuffer, setVertexBuffer] = useState<GPUBuffer | null>(null);
+  const { scene, gl } = useThree();
+
+  useEffect(() => {
+    return () => {
+      scene.clear();
+      gl.dispose();
+    };
+  }, [scene, gl]);
 
   useEffect(() => {
     async function initWebGPU() {
@@ -25,14 +32,12 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
       }
 
       const device = await adapter.requestDevice();
-      setDevice(device);
       console.log("device", device);
 
       const vertexBuffer = device.createBuffer({
         size: vertexCount * 3 * 4,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
       });
-      setVertexBuffer(vertexBuffer);
 
       const computeShaderModule = device.createShaderModule({
         code: `
@@ -45,14 +50,14 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
               return;
             }
             vertices[index] = vec3<f32>(
-              (random(vec2<f32>(f32(index), 0.0)) - 0.5) * 2000.0,
-              (random(vec2<f32>(f32(index), 1.0)) - 0.5) * 2000.0,
-              (random(vec2<f32>(f32(index), 2.0)) - 0.5) * 2000.0
+              sin(random(f32(index) + 0.0)) * 2000.0 - 1000.0,
+              sin(random(f32(index) + 1000.0)) * 2000.0 - 1000.0,
+              sin(random(f32(index) + 2000.0)) * 2000.0 - 1000.0
             );
           }
 
-          fn random(co: vec2<f32>) -> f32 {
-            return fract(sin(dot(co, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+          fn random(seed: f32) -> f32 {
+            return fract(sin(seed) * 43758.5453);
           }
         `,
       });
@@ -116,6 +121,7 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
   });
 
   const pointSize = Math.max(0.1, 5 - Math.log10(vertexCount));
+  console.log("pointSize", pointSize);
 
   return (
     <points ref={meshRef}>
@@ -130,9 +136,20 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
 export function WebGPUVertexVisualization({ vertexCount = 100000 }: WebGPUVertexVisualizationProps) {
   const cameraDistance = 1000 + Math.log10(vertexCount) * 500;
 
+  useEffect(() => {
+    const canvas = document.querySelector("canvas");
+    if (canvas) {
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+    }
+  }, []);
+
   return (
-    <Canvas camera={{ position: [0, 0, cameraDistance], fov: 75, near: 1, far: cameraDistance * 2 }}>
-      <PointCloud vertexCount={vertexCount} />
-    </Canvas>
+    <div className="h-screen">
+      <Canvas camera={{ position: [0, 0, cameraDistance], fov: 75, near: 1, far: cameraDistance * 2 }}>
+        <PointCloud vertexCount={vertexCount} />
+      </Canvas>
+      <PerformanceMonitor />
+    </div>
   );
 }
