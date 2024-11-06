@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { generateVertices } from "../utils/generateVertices";
-import { PerformanceMonitor } from "./PerformanceMonitor";
 
 interface PointCloudProps {
   vertexCount: number;
@@ -56,11 +55,10 @@ export function VertexVisualization({ vertexCount = 100000 }: VertexVisualizatio
   }, []);
 
   return (
-    <div className="h-screen">
+    <div className="w-full h-full">
       <Canvas camera={{ position: [0, 0, cameraDistance], fov: 75, near: 1, far: cameraDistance * 2 }}>
         <PointCloud vertexCount={vertexCount} />
       </Canvas>
-      <PerformanceMonitor />
     </div>
   );
 }

@@ -1,7 +1,7 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { PerformanceMonitor } from "./PerformanceMonitor";
+import { calculateOptimalChunkSize } from "../utils/gpuDataChunking";
 
 interface WebGPUVertexVisualizationProps {
   vertexCount: number;
@@ -10,6 +10,7 @@ interface WebGPUVertexVisualizationProps {
 function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
   const meshRef = useRef<THREE.Points>(null);
   const { scene, gl } = useThree();
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -20,93 +21,113 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
 
   useEffect(() => {
     async function initWebGPU() {
-      if (!navigator.gpu) {
-        console.error("WebGPU is not supported on this browser.");
-        return;
-      }
+      try {
+        if (!navigator.gpu) {
+          throw new Error("WebGPU is not supported");
+        }
 
-      const adapter = await navigator.gpu.requestAdapter();
-      if (!adapter) {
-        console.error("No appropriate GPUAdapter found.");
-        return;
-      }
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+          throw new Error("No appropriate GPUAdapter found");
+        }
 
-      const device = await adapter.requestDevice();
-      console.log("device", device);
+        const device = await adapter.requestDevice();
 
-      const vertexBuffer = device.createBuffer({
-        size: vertexCount * 3 * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-      });
+        // GPU 메모리 제한 계산
+        const maxBufferSize = adapter.limits.maxStorageBufferBindingSize;
+        const vertexSize = 3 * 4; // vec3<f32> = 12 bytes
+        const chunkSize = calculateOptimalChunkSize(vertexCount, vertexSize, maxBufferSize);
+        const chunks = Array.from({ length: Math.ceil(vertexCount / chunkSize) }, (_, i) => i * chunkSize).map((start) => Math.min(chunkSize, vertexCount - start));
 
-      const computeShaderModule = device.createShaderModule({
-        code: `
-          @group(0) @binding(0) var<storage, read_write> vertices: array<vec3<f32>>;
+        let allVertices = new Float32Array(vertexCount * 3);
+        let processedCount = 0;
 
-          @compute @workgroup_size(256)
-          fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
-            let index = global_id.x;
-            if (index >= ${vertexCount}u) {
-              return;
-            }
-            vertices[index] = vec3<f32>(
-              sin(random(f32(index) + 0.0)) * 2000.0 - 1000.0,
-              sin(random(f32(index) + 1000.0)) * 2000.0 - 1000.0,
-              sin(random(f32(index) + 2000.0)) * 2000.0 - 1000.0
-            );
-          }
+        // 청크별로 처리
+        for (const currentChunkSize of chunks) {
+          const vertexBuffer = device.createBuffer({
+            size: currentChunkSize * vertexSize,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+          });
 
-          fn random(seed: f32) -> f32 {
-            return fract(sin(seed) * 43758.5453);
-          }
-        `,
-      });
+          const computeShaderModule = device.createShaderModule({
+            code: `
+              @group(0) @binding(0) var<storage, read_write> vertices: array<vec3<f32>>;
 
-      const computePipeline = device.createComputePipeline({
-        layout: "auto",
-        compute: {
-          module: computeShaderModule,
-          entryPoint: "main",
-        },
-      });
+              @compute @workgroup_size(256)
+              fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+                let index = global_id.x;
+                if (index >= ${currentChunkSize}u) {
+                  return;
+                }
+                let globalIndex = ${processedCount}u + index;
+                vertices[index] = vec3<f32>(
+                  sin(random(f32(globalIndex) + 0.0)) * 2000.0 - 1000.0,
+                  sin(random(f32(globalIndex) + 1000.0)) * 2000.0 - 1000.0,
+                  sin(random(f32(globalIndex) + 2000.0)) * 2000.0 - 1000.0
+                );
+              }
 
-      const bindGroup = device.createBindGroup({
-        layout: computePipeline.getBindGroupLayout(0),
-        entries: [
-          {
-            binding: 0,
-            resource: {
-              buffer: vertexBuffer,
+              fn random(seed: f32) -> f32 {
+                return fract(sin(seed) * 43758.5453);
+              }
+            `,
+          });
+
+          const computePipeline = device.createComputePipeline({
+            layout: "auto",
+            compute: {
+              module: computeShaderModule,
+              entryPoint: "main",
             },
-          },
-        ],
-      });
+          });
 
-      // 초기 정점 생성
-      const commandEncoder = device.createCommandEncoder();
-      const passEncoder = commandEncoder.beginComputePass();
-      passEncoder.setPipeline(computePipeline);
-      passEncoder.setBindGroup(0, bindGroup);
-      passEncoder.dispatchWorkgroups(Math.ceil(vertexCount / 256));
-      passEncoder.end();
+          const bindGroup = device.createBindGroup({
+            layout: computePipeline.getBindGroupLayout(0),
+            entries: [
+              {
+                binding: 0,
+                resource: {
+                  buffer: vertexBuffer,
+                },
+              },
+            ],
+          });
 
-      const gpuReadBuffer = device.createBuffer({
-        size: vertexCount * 3 * 4,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-      });
+          const commandEncoder = device.createCommandEncoder();
+          const passEncoder = commandEncoder.beginComputePass();
+          passEncoder.setPipeline(computePipeline);
+          passEncoder.setBindGroup(0, bindGroup);
+          passEncoder.dispatchWorkgroups(Math.ceil(currentChunkSize / 256));
+          passEncoder.end();
 
-      commandEncoder.copyBufferToBuffer(vertexBuffer, 0, gpuReadBuffer, 0, vertexCount * 3 * 4);
+          const gpuReadBuffer = device.createBuffer({
+            size: currentChunkSize * vertexSize,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+          });
 
-      device.queue.submit([commandEncoder.finish()]);
+          commandEncoder.copyBufferToBuffer(vertexBuffer, 0, gpuReadBuffer, 0, currentChunkSize * vertexSize);
 
-      await gpuReadBuffer.mapAsync(GPUMapMode.READ);
-      const arrayBuffer = gpuReadBuffer.getMappedRange();
-      const vertices = new Float32Array(arrayBuffer.slice(0));
-      gpuReadBuffer.unmap();
+          device.queue.submit([commandEncoder.finish()]);
 
-      if (meshRef.current) {
-        meshRef.current.geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-        meshRef.current.geometry.attributes.position.needsUpdate = true;
+          await gpuReadBuffer.mapAsync(GPUMapMode.READ);
+          const arrayBuffer = gpuReadBuffer.getMappedRange();
+          const chunkVertices = new Float32Array(arrayBuffer);
+          allVertices.set(chunkVertices, processedCount * 3);
+
+          gpuReadBuffer.unmap();
+          vertexBuffer.destroy();
+          gpuReadBuffer.destroy();
+
+          processedCount += currentChunkSize;
+        }
+
+        if (meshRef.current) {
+          meshRef.current.geometry.setAttribute("position", new THREE.BufferAttribute(allVertices, 3));
+          meshRef.current.geometry.attributes.position.needsUpdate = true;
+        }
+      } catch (err) {
+        console.error("GPU 처리 중 오류:", err);
+        setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다");
       }
     }
 
@@ -120,8 +141,15 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
     }
   });
 
+  if (error) {
+    return (
+      <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center text-white bg-red-500/50">
+        <p>{error}</p>
+      </div>
+    );
+  }
+
   const pointSize = Math.max(0.1, 5 - Math.log10(vertexCount));
-  console.log("pointSize", pointSize);
 
   return (
     <points ref={meshRef}>
@@ -145,11 +173,10 @@ export function WebGPUVertexVisualization({ vertexCount = 100000 }: WebGPUVertex
   }, []);
 
   return (
-    <div className="h-screen">
+    <div className="w-full h-full">
       <Canvas camera={{ position: [0, 0, cameraDistance], fov: 75, near: 1, far: cameraDistance * 2 }}>
         <PointCloud vertexCount={vertexCount} />
       </Canvas>
-      <PerformanceMonitor />
     </div>
   );
 }
