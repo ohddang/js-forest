@@ -1,16 +1,222 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { calculateOptimalChunkSize } from "../utils/gpuDataChunking";
 
 interface WebGPUVertexVisualizationProps {
   vertexCount: number;
 }
 
 function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
+  // Refs
   const meshRef = useRef<THREE.Points>(null);
+  const deviceRef = useRef<GPUDevice | null>(null);
+  const computePipelineRef = useRef<GPUComputePipeline | null>(null);
+  const bindGroupRef = useRef<GPUBindGroup | null>(null);
+  const vertexBufferRef = useRef<GPUBuffer | null>(null);
+  const uniformBufferRef = useRef<GPUBuffer | null>(null);
+  const gpuReadBufferRef = useRef<GPUBuffer | null>(null);
+  const isAnimatingRef = useRef(true);
+  const prevVertexCountRef = useRef(vertexCount);
+
+  // State & Context
   const { scene, gl } = useThree();
   const [error, setError] = useState<string | null>(null);
+
+  // GPU 리소스 정리
+  const cleanupResources = useCallback(() => {
+    [vertexBufferRef, uniformBufferRef, gpuReadBufferRef].forEach((ref) => {
+      if (ref.current) {
+        ref.current.destroy();
+        ref.current = null;
+      }
+    });
+    bindGroupRef.current = null;
+    computePipelineRef.current = null;
+  }, []);
+
+  // WebGPU 초기화
+  const initWebGPU = useCallback(async () => {
+    try {
+      if (!deviceRef.current) return;
+
+      const vertexSize = 4 * 3;
+      const totalBufferSize = vertexCount * vertexSize;
+
+      // 버퍼 생성
+      vertexBufferRef.current = deviceRef.current.createBuffer({
+        size: totalBufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      });
+
+      uniformBufferRef.current = deviceRef.current.createBuffer({
+        size: 4,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+
+      // 수정된 컴퓨트 셰이더 코드 수정
+      const shaderCode = `
+              struct Uniforms {
+                  time: f32,
+                };
+                @binding(0) @group(0) var<uniform> uniforms: Uniforms;
+                @binding(1) @group(0) var<storage, read_write> vertices: array<vec3<f32>>;
+  
+                const PI: f32 = 3.14159265359;
+  
+                @compute @workgroup_size(256)
+                fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+                  let index = global_id.x;
+                  if (index >= ${vertexCount}u) {
+                    return;
+                  }
+  
+                  var position = vertices[index];
+                  let time = uniforms.time;
+                  
+                  // 기존 위치를 기반으로 한 회전 및 스케일 애니메이션
+                  let distance = sqrt(position.x * position.x + position.y * position.y + position.z * position.z);
+                  let theta = atan2(position.y, position.x) + time * (0.1 + distance * 0.0001);
+                  let phi = atan2(sqrt(position.x * position.x + position.y * position.y), position.z);
+                  
+                  // 회전하는 구면 좌표계 적용
+                  let scale = 1.0 + sin(distance * 0.01 + time) * 0.3;
+                  position.x = distance * scale * sin(phi) * cos(theta);
+                  position.y = distance * scale * sin(phi) * sin(theta);
+                  position.z = distance * scale * cos(phi);
+  
+                  // 추가적인 파동 효과
+                  let wave = sin(distance * 0.02 - time * 2.0) * 20.0;
+                  position = position + position * wave / distance;
+  
+                  // 경계 제한
+                  position = clamp(position, vec3<f32>(-1000.0), vec3<f32>(1000.0));
+                  
+                  vertices[index] = position;
+                }
+  
+                fn random(seed: f32) -> f32 {
+                  return fract(sin(seed) * 43758.5453);
+                }
+        `;
+
+      // 수정된 컴퓨트 셰이더
+      const computeShaderModule = deviceRef.current.createShaderModule({
+        code: shaderCode,
+      });
+
+      computePipelineRef.current = deviceRef.current.createComputePipeline({
+        layout: "auto",
+        compute: {
+          module: computeShaderModule,
+          entryPoint: "main",
+        },
+      });
+
+      // 초기 데이터 설정
+      const initialVertices = new Float32Array(vertexCount * 3);
+      for (let i = 0; i < vertexCount; i++) {
+        initialVertices[i * 3] = (Math.random() * 2 - 1) * 1000;
+        initialVertices[i * 3 + 1] = (Math.random() * 2 - 1) * 1000;
+        initialVertices[i * 3 + 2] = (Math.random() * 2 - 1) * 1000;
+      }
+      deviceRef.current.queue.writeBuffer(vertexBufferRef.current, 0, initialVertices);
+
+      // 바인드 그룹 설정
+      bindGroupRef.current = deviceRef.current.createBindGroup({
+        layout: computePipelineRef.current.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: uniformBufferRef.current } },
+          { binding: 1, resource: { buffer: vertexBufferRef.current } },
+        ],
+      });
+    } catch (err) {
+      console.error("GPU 처리 중 오류:", err);
+      setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다");
+    }
+  }, [vertexCount]);
+
+  // 애니메이션 프레임 처리
+  const animate = useCallback(async () => {
+    if (
+      !isAnimatingRef.current ||
+      !deviceRef.current ||
+      !vertexBufferRef.current ||
+      !computePipelineRef.current ||
+      !bindGroupRef.current ||
+      !uniformBufferRef.current ||
+      !meshRef.current
+    )
+      return;
+
+    try {
+      const timeData = new Float32Array([performance.now() / 1000]);
+      deviceRef.current.queue.writeBuffer(uniformBufferRef.current, 0, timeData);
+
+      const commandEncoder = deviceRef.current.createCommandEncoder();
+      const passEncoder = commandEncoder.beginComputePass();
+      passEncoder.setPipeline(computePipelineRef.current);
+      passEncoder.setBindGroup(0, bindGroupRef.current);
+      passEncoder.dispatchWorkgroups(Math.ceil(vertexCount / 256));
+      passEncoder.end();
+
+      const gpuReadBuffer = deviceRef.current.createBuffer({
+        size: vertexCount * 12,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+
+      commandEncoder.copyBufferToBuffer(vertexBufferRef.current, 0, gpuReadBuffer, 0, vertexCount * 12);
+      deviceRef.current.queue.submit([commandEncoder.finish()]);
+
+      await gpuReadBuffer.mapAsync(GPUMapMode.READ);
+      const vertices = new Float32Array(gpuReadBuffer.getMappedRange());
+
+      const positionAttribute = meshRef.current.geometry.getAttribute("position") as THREE.BufferAttribute;
+      positionAttribute.array.set(vertices);
+      positionAttribute.needsUpdate = true;
+
+      gpuReadBuffer.unmap();
+      gpuReadBuffer.destroy();
+    } catch (error) {
+      console.error("애니메이션 프레임 처리 중 오류:", error);
+      isAnimatingRef.current = false;
+    }
+  }, [vertexCount]);
+
+  // Effects
+  useEffect(() => {
+    const initGPU = async () => {
+      try {
+        if (!navigator.gpu) throw new Error("WebGPU is not supported");
+
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) throw new Error("No appropriate GPUAdapter found");
+
+        deviceRef.current = await adapter.requestDevice();
+        await initWebGPU();
+        isAnimatingRef.current = true;
+      } catch (err) {
+        console.error("GPU 초기화 중 오류:", err);
+        setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다");
+      }
+    };
+
+    initGPU();
+    return () => {
+      isAnimatingRef.current = false;
+      cleanupResources();
+      deviceRef.current = null;
+    };
+  }, [initWebGPU, cleanupResources]);
+
+  useEffect(() => {
+    if (prevVertexCountRef.current !== vertexCount) {
+      isAnimatingRef.current = false;
+      cleanupResources();
+      prevVertexCountRef.current = vertexCount;
+      initWebGPU();
+      isAnimatingRef.current = true;
+    }
+  }, [vertexCount, cleanupResources, initWebGPU]);
 
   useEffect(() => {
     return () => {
@@ -19,125 +225,9 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
     };
   }, [scene, gl]);
 
-  useEffect(() => {
-    async function initWebGPU() {
-      try {
-        if (!navigator.gpu) {
-          throw new Error("WebGPU is not supported");
-        }
-
-        const adapter = await navigator.gpu.requestAdapter();
-        if (!adapter) {
-          throw new Error("No appropriate GPUAdapter found");
-        }
-
-        const device = await adapter.requestDevice();
-
-        // GPU 메모리 제한 계산
-        const maxBufferSize = adapter.limits.maxStorageBufferBindingSize;
-        const vertexSize = 3 * 4; // vec3<f32> = 12 bytes
-        const chunkSize = calculateOptimalChunkSize(vertexCount, vertexSize, maxBufferSize);
-        const chunks = Array.from({ length: Math.ceil(vertexCount / chunkSize) }, (_, i) => i * chunkSize).map((start) => Math.min(chunkSize, vertexCount - start));
-
-        let allVertices = new Float32Array(vertexCount * 3);
-        let processedCount = 0;
-
-        // 청크별로 처리
-        for (const currentChunkSize of chunks) {
-          const vertexBuffer = device.createBuffer({
-            size: currentChunkSize * vertexSize,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-          });
-
-          const computeShaderModule = device.createShaderModule({
-            code: `
-              @group(0) @binding(0) var<storage, read_write> vertices: array<vec3<f32>>;
-
-              @compute @workgroup_size(256)
-              fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
-                let index = global_id.x;
-                if (index >= ${currentChunkSize}u) {
-                  return;
-                }
-                let globalIndex = ${processedCount}u + index;
-                vertices[index] = vec3<f32>(
-                  sin(random(f32(globalIndex) + 0.0)) * 2000.0 - 1000.0,
-                  sin(random(f32(globalIndex) + 1000.0)) * 2000.0 - 1000.0,
-                  sin(random(f32(globalIndex) + 2000.0)) * 2000.0 - 1000.0
-                );
-              }
-
-              fn random(seed: f32) -> f32 {
-                return fract(sin(seed) * 43758.5453);
-              }
-            `,
-          });
-
-          const computePipeline = device.createComputePipeline({
-            layout: "auto",
-            compute: {
-              module: computeShaderModule,
-              entryPoint: "main",
-            },
-          });
-
-          const bindGroup = device.createBindGroup({
-            layout: computePipeline.getBindGroupLayout(0),
-            entries: [
-              {
-                binding: 0,
-                resource: {
-                  buffer: vertexBuffer,
-                },
-              },
-            ],
-          });
-
-          const commandEncoder = device.createCommandEncoder();
-          const passEncoder = commandEncoder.beginComputePass();
-          passEncoder.setPipeline(computePipeline);
-          passEncoder.setBindGroup(0, bindGroup);
-          passEncoder.dispatchWorkgroups(Math.ceil(currentChunkSize / 256));
-          passEncoder.end();
-
-          const gpuReadBuffer = device.createBuffer({
-            size: currentChunkSize * vertexSize,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-          });
-
-          commandEncoder.copyBufferToBuffer(vertexBuffer, 0, gpuReadBuffer, 0, currentChunkSize * vertexSize);
-
-          device.queue.submit([commandEncoder.finish()]);
-
-          await gpuReadBuffer.mapAsync(GPUMapMode.READ);
-          const arrayBuffer = gpuReadBuffer.getMappedRange();
-          const chunkVertices = new Float32Array(arrayBuffer);
-          allVertices.set(chunkVertices, processedCount * 3);
-
-          gpuReadBuffer.unmap();
-          vertexBuffer.destroy();
-          gpuReadBuffer.destroy();
-
-          processedCount += currentChunkSize;
-        }
-
-        if (meshRef.current) {
-          meshRef.current.geometry.setAttribute("position", new THREE.BufferAttribute(allVertices, 3));
-          meshRef.current.geometry.attributes.position.needsUpdate = true;
-        }
-      } catch (err) {
-        console.error("GPU 처리 중 오류:", err);
-        setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다");
-      }
-    }
-
-    initWebGPU();
-  }, [vertexCount]);
-
   useFrame(() => {
-    if (meshRef.current) {
-      meshRef.current.rotation.x += 0.001;
-      meshRef.current.rotation.y += 0.002;
+    if (isAnimatingRef.current) {
+      animate();
     }
   });
 
@@ -149,33 +239,30 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
     );
   }
 
-  const pointSize = Math.max(0.1, 5 - Math.log10(vertexCount));
-
   return (
     <points ref={meshRef}>
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" count={vertexCount} array={new Float32Array(vertexCount * 3)} itemSize={3} usage={THREE.DynamicDrawUsage} />
       </bufferGeometry>
-      <pointsMaterial size={pointSize} sizeAttenuation color="#ffffff" />
+      <pointsMaterial size={Math.max(0.1, 5 - Math.log10(vertexCount))} sizeAttenuation={true} color="#ffffff" transparent={true} opacity={0.8} />
     </points>
   );
 }
 
 export function WebGPUVertexVisualization({ vertexCount = 100000 }: WebGPUVertexVisualizationProps) {
-  const cameraDistance = 1000 + Math.log10(vertexCount) * 500;
-
-  useEffect(() => {
-    const canvas = document.querySelector("canvas");
-    if (canvas) {
-      canvas.style.width = "100%";
-      canvas.style.height = "100%";
-    }
-  }, []);
+  const cameraDistance = 2000 + Math.log10(vertexCount) * 500;
 
   return (
     <div className="w-full h-full">
-      <Canvas camera={{ position: [0, 0, cameraDistance], fov: 75, near: 1, far: cameraDistance * 2 }}>
+      <Canvas
+        camera={{
+          position: [cameraDistance, cameraDistance, cameraDistance],
+          fov: 60,
+          near: 1,
+          far: cameraDistance * 3,
+        }}>
         <PointCloud vertexCount={vertexCount} />
+        <ambientLight intensity={0.5} />
       </Canvas>
     </div>
   );
