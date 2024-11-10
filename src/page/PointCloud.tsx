@@ -44,9 +44,9 @@ export default function PointCloud() {
           {mode === "none" && <p>정점 수를 입력하고 모드를 선택해주세요</p>}
         </div>
         <div className="flex flex-row gap-3">
-          <button onClick={() => setMode("normal")}>일반 모드</button>
-          <button onClick={() => setMode("webgpu")} disabled={!isWebGPUSupported}>
-            WebGPU 모드 {!isWebGPUSupported && "(지원되지 않음)"}
+          <button onClick={() => setMode("normal")}>일반 모드(CPU)</button>
+          <button onClick={() => setMode("webgpu")} disabled={!isWebGPUSupported} className="disabled:pointer-events-none disabled:bg-gray-800 disabled:text-gray-500">
+            WebGPU 모드(Compute Shader) {!isWebGPUSupported && "(지원되지 않음)"}
           </button>
         </div>
       </div>

@@ -9,14 +9,21 @@ export default function Sidebar() {
           <NavLink to="/pointcloud" className={({ isActive }) => `${isActive ? "font-bold text-sky-300" : " hover:text-gray-300"}`}>
             Point Cloud
           </NavLink>
-          <p>etc..</p>
+          <p>...</p>
         </div>
       </div>
       <div>
         <p className="mb-2 text-xl font-bold">WebAssembly</p>
         <div className="ml-2 flex flex-col gap-1">
-          <p>etc..</p>
-          <p>etc..</p>
+          <p>Emotion Analysis</p>
+          <p>...</p>
+        </div>
+      </div>
+      <div>
+        <p className="mb-2 text-xl font-bold">Etc</p>
+        <div className="ml-2 flex flex-col gap-1">
+          <p className="whitespace-nowrap">WebGPU vs WASM</p>
+          <p>...</p>
         </div>
       </div>
     </div>

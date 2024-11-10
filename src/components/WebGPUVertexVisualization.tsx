@@ -21,6 +21,24 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
   const { scene, gl } = useThree();
   const [error, setError] = useState<string | null>(null);
 
+  const checkDeviceLimits = async () => {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) throw new Error("No appropriate GPUAdapter found");
+
+      // 디바이스 제한사항 확인
+      const limits = adapter.limits;
+      console.log("Maximum Compute Invocations Per Workgroup:", limits.maxComputeInvocationsPerWorkgroup);
+      console.log("Maximum Compute Workgroup Size X:", limits.maxComputeWorkgroupSizeX);
+      console.log("Maximum Compute Workgroup Storage Size:", limits.maxComputeWorkgroupStorageSize);
+
+      return limits;
+    } catch (err) {
+      console.error("GPU 제한사항 확인 중 오류:", err);
+      return null;
+    }
+  };
+
   // GPU 리소스 정리
   const cleanupResources = () => {
     [vertexBufferRef, uniformBufferRef, gpuReadBufferRef].forEach((ref) => {
@@ -56,6 +74,7 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
 
       const commandEncoder = deviceRef.current.createCommandEncoder();
       const passEncoder = commandEncoder.beginComputePass();
+
       passEncoder.setPipeline(computePipelineRef.current);
       passEncoder.setBindGroup(0, bindGroupRef.current);
       passEncoder.dispatchWorkgroups(Math.ceil(vertexCount / 64));
@@ -88,6 +107,9 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
   const initWebGPU = async () => {
     try {
       if (!deviceRef.current) return;
+
+      const limits = await checkDeviceLimits();
+      console.log("limits", limits);
 
       const vertexSize = 4 * 3;
       const totalBufferSize = vertexCount * vertexSize;
