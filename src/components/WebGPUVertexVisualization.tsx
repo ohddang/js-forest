@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 
@@ -16,14 +16,13 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
   const uniformBufferRef = useRef<GPUBuffer | null>(null);
   const gpuReadBufferRef = useRef<GPUBuffer | null>(null);
   const isAnimatingRef = useRef(true);
-  const prevVertexCountRef = useRef(vertexCount);
 
   // State & Context
   const { scene, gl } = useThree();
   const [error, setError] = useState<string | null>(null);
 
   // GPU 리소스 정리
-  const cleanupResources = useCallback(() => {
+  const cleanupResources = () => {
     [vertexBufferRef, uniformBufferRef, gpuReadBufferRef].forEach((ref) => {
       if (ref.current) {
         ref.current.destroy();
@@ -32,123 +31,26 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
     });
     bindGroupRef.current = null;
     computePipelineRef.current = null;
-  }, []);
-
-  // WebGPU 초기화
-  const initWebGPU = useCallback(async () => {
-    try {
-      if (!deviceRef.current) return;
-
-      const vertexSize = 4 * 3;
-      const totalBufferSize = vertexCount * vertexSize;
-
-      // 버퍼 생성
-      vertexBufferRef.current = deviceRef.current.createBuffer({
-        size: totalBufferSize,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-      });
-
-      uniformBufferRef.current = deviceRef.current.createBuffer({
-        size: 4,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
-
-      // 수정된 컴퓨트 셰이더 코드 수정
-      const shaderCode = `
-              struct Uniforms {
-                  time: f32,
-                };
-                @binding(0) @group(0) var<uniform> uniforms: Uniforms;
-                @binding(1) @group(0) var<storage, read_write> vertices: array<vec3<f32>>;
-  
-                const PI: f32 = 3.14159265359;
-  
-                @compute @workgroup_size(256)
-                fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
-                  let index = global_id.x;
-                  if (index >= ${vertexCount}u) {
-                    return;
-                  }
-  
-                  var position = vertices[index];
-                  let time = uniforms.time;
-                  
-                  // 기존 위치를 기반으로 한 회전 및 스케일 애니메이션
-                  let distance = sqrt(position.x * position.x + position.y * position.y + position.z * position.z);
-                  let theta = atan2(position.y, position.x) + time * (0.1 + distance * 0.0001);
-                  let phi = atan2(sqrt(position.x * position.x + position.y * position.y), position.z);
-                  
-                  // 회전하는 구면 좌표계 적용
-                  let scale = 1.0 + sin(distance * 0.01 + time) * 0.3;
-                  position.x = distance * scale * sin(phi) * cos(theta);
-                  position.y = distance * scale * sin(phi) * sin(theta);
-                  position.z = distance * scale * cos(phi);
-  
-                  // 추가적인 파동 효과
-                  let wave = sin(distance * 0.02 - time * 2.0) * 20.0;
-                  position = position + position * wave / distance;
-  
-                  // 경계 제한
-                  position = clamp(position, vec3<f32>(-1000.0), vec3<f32>(1000.0));
-                  
-                  vertices[index] = position;
-                }
-  
-                fn random(seed: f32) -> f32 {
-                  return fract(sin(seed) * 43758.5453);
-                }
-        `;
-
-      // 수정된 컴퓨트 셰이더
-      const computeShaderModule = deviceRef.current.createShaderModule({
-        code: shaderCode,
-      });
-
-      computePipelineRef.current = deviceRef.current.createComputePipeline({
-        layout: "auto",
-        compute: {
-          module: computeShaderModule,
-          entryPoint: "main",
-        },
-      });
-
-      // 초기 데이터 설정
-      const initialVertices = new Float32Array(vertexCount * 3);
-      for (let i = 0; i < vertexCount; i++) {
-        initialVertices[i * 3] = (Math.random() * 2 - 1) * 1000;
-        initialVertices[i * 3 + 1] = (Math.random() * 2 - 1) * 1000;
-        initialVertices[i * 3 + 2] = (Math.random() * 2 - 1) * 1000;
-      }
-      deviceRef.current.queue.writeBuffer(vertexBufferRef.current, 0, initialVertices);
-
-      // 바인드 그룹 설정
-      bindGroupRef.current = deviceRef.current.createBindGroup({
-        layout: computePipelineRef.current.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: uniformBufferRef.current } },
-          { binding: 1, resource: { buffer: vertexBufferRef.current } },
-        ],
-      });
-    } catch (err) {
-      console.error("GPU 처리 중 오류:", err);
-      setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다");
-    }
-  }, [vertexCount]);
+  };
 
   // 애니메이션 프레임 처리
-  const animate = useCallback(async () => {
-    if (
-      !isAnimatingRef.current ||
-      !deviceRef.current ||
-      !vertexBufferRef.current ||
-      !computePipelineRef.current ||
-      !bindGroupRef.current ||
-      !uniformBufferRef.current ||
-      !meshRef.current
-    )
-      return;
-
+  const animate = async () => {
     try {
+      if (
+        !isAnimatingRef.current ||
+        !deviceRef.current ||
+        !vertexBufferRef.current ||
+        !computePipelineRef.current ||
+        !bindGroupRef.current ||
+        !uniformBufferRef.current ||
+        !meshRef.current
+      ) {
+        console.error("GPU is not ready");
+        return;
+      } else {
+        console.log("GPU is ready");
+      }
+
       const timeData = new Float32Array([performance.now() / 1000]);
       deviceRef.current.queue.writeBuffer(uniformBufferRef.current, 0, timeData);
 
@@ -156,7 +58,7 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
       const passEncoder = commandEncoder.beginComputePass();
       passEncoder.setPipeline(computePipelineRef.current);
       passEncoder.setBindGroup(0, bindGroupRef.current);
-      passEncoder.dispatchWorkgroups(Math.ceil(vertexCount / 256));
+      passEncoder.dispatchWorkgroups(Math.ceil(vertexCount / 64));
       passEncoder.end();
 
       const gpuReadBuffer = deviceRef.current.createBuffer({
@@ -180,9 +82,116 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
       console.error("애니메이션 프레임 처리 중 오류:", error);
       isAnimatingRef.current = false;
     }
-  }, [vertexCount]);
+  };
 
-  // Effects
+  // init WebGPU
+  const initWebGPU = async () => {
+    try {
+      if (!deviceRef.current) return;
+
+      const vertexSize = 4 * 3;
+      const totalBufferSize = vertexCount * vertexSize;
+
+      // 버퍼 생성
+      vertexBufferRef.current = deviceRef.current.createBuffer({
+        size: totalBufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      });
+      console.log("vertexBufferRef.current", vertexBufferRef.current);
+
+      uniformBufferRef.current = deviceRef.current.createBuffer({
+        size: 4,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      console.log("uniformBufferRef.current", uniformBufferRef.current);
+
+      // 수정된 컴퓨트 셰이더 코드 수정
+      const shaderCode = `
+                  struct Uniforms {
+                      time: f32,
+                    };
+                    @binding(0) @group(0) var<uniform> uniforms: Uniforms;
+                    @binding(1) @group(0) var<storage, read_write> vertices: array<vec3<f32>>;
+      
+                    const PI: f32 = 3.14159265359;
+      
+                    @compute @workgroup_size(64)
+                    fn main(@builtin(global_invocation_id) global_id : vec3<u32>) {
+                      let index = global_id.x;
+                      if (index >= ${vertexCount}u) {
+                        return;
+                      }
+      
+                      var position = vertices[index];
+                      let time = uniforms.time;
+                      
+                      // 기존 위치를 기반으로 한 회전 및 스케일 애니메이션
+                      let distance = sqrt(position.x * position.x + position.y * position.y + position.z * position.z);
+                      let theta = atan2(position.y, position.x) + time * (0.1 + distance * 0.0001);
+                      let phi = atan2(sqrt(position.x * position.x + position.y * position.y), position.z);
+                      
+                      // 회전하는 구면 좌표계 적용
+                      let scale = 1.0 + sin(distance * 0.01 + time) * 0.3;
+                      position.x = distance * scale * sin(phi) * cos(theta);
+                      position.y = distance * scale * sin(phi) * sin(theta);
+                      position.z = distance * scale * cos(phi);
+      
+                      // 추가적인 파동 효과
+                      let wave = sin(distance * 0.02 - time * 2.0) * 20.0;
+                      position = position + position * wave / distance;
+      
+                      // 경계 제한
+                      position = clamp(position, vec3<f32>(-1000.0), vec3<f32>(1000.0));
+                      
+                      vertices[index] = position;
+                    }
+      
+                    fn random(seed: f32) -> f32 {
+                      return fract(sin(seed) * 43758.5453);
+                    }
+            `;
+
+      // 수정된 컴퓨트 셰이더
+      const computeShaderModule = deviceRef.current.createShaderModule({
+        code: shaderCode,
+      });
+
+      computePipelineRef.current = deviceRef.current.createComputePipeline({
+        layout: "auto",
+        compute: {
+          module: computeShaderModule,
+          entryPoint: "main",
+        },
+      });
+      console.log("computePipelineRef.current", computePipelineRef.current);
+
+      // 초기 데이터 설정
+      const initialVertices = new Float32Array(vertexCount * 3);
+      for (let i = 0; i < vertexCount; i++) {
+        initialVertices[i * 3] = (Math.random() * 2 - 1) * 1000;
+        initialVertices[i * 3 + 1] = (Math.random() * 2 - 1) * 1000;
+        initialVertices[i * 3 + 2] = (Math.random() * 2 - 1) * 1000;
+      }
+      deviceRef.current.queue.writeBuffer(vertexBufferRef.current, 0, initialVertices);
+      console.log("deviceRef.current.queue.writeBuffer");
+
+      // 바인드 그룹 설정
+      bindGroupRef.current = deviceRef.current.createBindGroup({
+        layout: computePipelineRef.current.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: uniformBufferRef.current } },
+          { binding: 1, resource: { buffer: vertexBufferRef.current } },
+        ],
+      });
+      console.log("bindGroupRef.current", bindGroupRef.current);
+
+      isAnimatingRef.current = true;
+    } catch (err) {
+      console.error("GPU 처리 중 오류:", err);
+      setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다");
+    }
+  };
+
   useEffect(() => {
     const initGPU = async () => {
       try {
@@ -193,7 +202,6 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
 
         deviceRef.current = await adapter.requestDevice();
         await initWebGPU();
-        isAnimatingRef.current = true;
       } catch (err) {
         console.error("GPU 초기화 중 오류:", err);
         setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다");
@@ -201,22 +209,19 @@ function PointCloud({ vertexCount }: WebGPUVertexVisualizationProps) {
     };
 
     initGPU();
-    return () => {
-      isAnimatingRef.current = false;
-      cleanupResources();
-      deviceRef.current = null;
-    };
-  }, [initWebGPU, cleanupResources]);
+  }, []);
 
+  // Effects
   useEffect(() => {
-    if (prevVertexCountRef.current !== vertexCount) {
+    if (deviceRef.current) {
       isAnimatingRef.current = false;
-      cleanupResources();
-      prevVertexCountRef.current = vertexCount;
       initWebGPU();
-      isAnimatingRef.current = true;
     }
-  }, [vertexCount, cleanupResources, initWebGPU]);
+
+    return () => {
+      cleanupResources();
+    };
+  }, [vertexCount]);
 
   useEffect(() => {
     return () => {

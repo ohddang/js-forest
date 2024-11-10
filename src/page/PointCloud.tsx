@@ -4,7 +4,7 @@ import { WebGPUVertexVisualization } from "../components/WebGPUVertexVisualizati
 import { PerformanceMonitor } from "../components/PerformanceMonitor";
 
 export default function PointCloud() {
-  const [vertexCount, setVertexCount] = useState(100000);
+  const [vertexCount, setVertexCount] = useState<number>(10000);
   const [mode, setMode] = useState<"none" | "normal" | "webgpu">("none");
   const [isWebGPUSupported, setIsWebGPUSupported] = useState(false);
 

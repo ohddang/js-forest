@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Sidebar from "./components/ui/Sidebar";
 import PointCloud from "./page/PointCloud";
 import { ErrorBoundary } from "./utils/errorBoundary";
@@ -16,12 +16,12 @@ function App() {
             </button>
           </div>
         </div>
-      }
-    >
+      }>
       <div className="w-screen h-screen flex flex-row bg-sky-700">
         <Sidebar />
         <div className="w-full h-screen">
           <Routes>
+            <Route path="/" element={<Navigate to="/pointcloud" replace />} />
             <Route path="/pointcloud" element={<PointCloud />} />
           </Routes>
         </div>
