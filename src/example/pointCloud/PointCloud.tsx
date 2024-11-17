@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { VertexVisualization } from "../components/VertexVisualization";
-import { WebGPUVertexVisualization } from "../components/WebGPUVertexVisualization";
-import { PerformanceMonitor } from "../components/PerformanceMonitor";
+import { VertexVisualization } from "./VertexVisualization";
+import { WebGPUVertexVisualization } from "./WebGPUVertexVisualization";
+import { PerformanceMonitor } from "../../components/PerformanceMonitor";
 
 export default function PointCloud() {
   const [vertexCount, setVertexCount] = useState<number>(10000);
@@ -21,7 +21,7 @@ export default function PointCloud() {
   }, []);
 
   return (
-    <div className="relative w-full h-full">
+    <article className="relative w-full h-full">
       {mode === "normal" && <VertexVisualization vertexCount={vertexCount} />}
       {mode === "webgpu" && isWebGPUSupported && <WebGPUVertexVisualization vertexCount={vertexCount} />}
       <div className="absolute top-0 left-0 w-full h-auto flex flex-col gap-3 p-5">
@@ -51,6 +51,6 @@ export default function PointCloud() {
         </div>
       </div>
       <PerformanceMonitor />
-    </div>
+    </article>
   );
 }
