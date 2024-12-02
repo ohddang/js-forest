@@ -3,6 +3,7 @@ import Sidebar from "./components/ui/Sidebar";
 import PointCloud from "./example/pointCloud/PointCloud";
 import { ErrorBoundary } from "./utils/errorBoundary";
 import SVGConverter from "./example/svgConverter/SVGConverter";
+import SVGConverterWorker from "./example/svgConverter/SVGConverterWorker";
 
 function App() {
   return (
@@ -17,7 +18,8 @@ function App() {
             </button>
           </div>
         </div>
-      }>
+      }
+    >
       <div className="w-screen h-screen flex flex-row bg-sky-900">
         <Sidebar />
         <div className="w-full h-screen">
@@ -25,6 +27,7 @@ function App() {
             <Route path="/" element={<Navigate to="/pointcloud" replace />} />
             <Route path="/pointcloud" element={<PointCloud />} />
             <Route path="/svgconverter" element={<SVGConverter />} />
+            <Route path="/svgconverter-worker" element={<SVGConverterWorker />} />
           </Routes>
         </div>
       </div>

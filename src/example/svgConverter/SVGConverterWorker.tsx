@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as ASSETS from "../../assets";
 
-export default function SVGConverter() {
+export default function SVGConverterWorker() {
   const [width, setWidth] = useState<number>(0);
   const [height, setHeight] = useState<number>(0);
   const [imageData, setImageData] = useState<Uint8ClampedArray | null>(null);
@@ -29,72 +29,17 @@ export default function SVGConverter() {
     if (!imageData) return;
 
     isConvertRef.current = true;
-    const visited = new Uint8Array(Math.ceil((width * height) / 8)); // 비트 배열로 변경
-    const paths: string[] = [];
 
+    const worker = new Worker(new URL("./floodFillWorker.js", import.meta.url));
     console.time("generate svg");
+    worker.postMessage({ width, height, imageData, color: [0, 0, 0] });
 
-    const isVisited = (index: number) => (visited[Math.floor(index / 8)] & (1 << index % 8)) !== 0;
-    const setVisited = (index: number) => (visited[Math.floor(index / 8)] |= 1 << index % 8);
-
-    const floodFill = async (x: number, y: number, color: number[], path: string[]) => {
-      const stack = [[x, y]];
-      while (stack.length > 0) {
-        const [currentX, currentY] = stack.pop()!;
-        const index = currentY * width + currentX;
-        if (isVisited(index)) continue;
-
-        const pixelIndex = index * 4;
-        const currentColor = [imageData[pixelIndex], imageData[pixelIndex + 1], imageData[pixelIndex + 2]];
-        const alpha = imageData[pixelIndex + 3];
-
-        if (alpha === 0 || isVisited(index)) {
-          setVisited(index);
-          continue;
-        }
-
-        if (Math.abs(currentColor[0] - color[0]) + Math.abs(currentColor[1] - color[1]) + Math.abs(currentColor[2] - color[2]) < 1) {
-          setVisited(index);
-          path.push(`L ${currentX} ${currentY}`);
-
-          for (let i = -1; i <= 1; i++) {
-            for (let j = -1; j <= 1; j++) {
-              if (i === 0 && j === 0) continue;
-              const nextX = currentX + i;
-              const nextY = currentY + j;
-              if (nextX >= 0 && nextX < width && nextY >= 0 && nextY < height) {
-                stack.push([nextX, nextY]);
-              }
-            }
-          }
-        }
-      }
+    worker.onmessage = (e) => {
+      setSvgData(e.data);
+      isConvertRef.current = false;
+      console.timeEnd("generate svg");
+      worker.terminate();
     };
-
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const index = y * width + x;
-        if (isVisited(index)) continue;
-
-        const pixelIndex = index * 4;
-        const color = [imageData[pixelIndex], imageData[pixelIndex + 1], imageData[pixelIndex + 2]];
-        const alpha = imageData[pixelIndex + 3];
-
-        if (alpha === 0) {
-          setVisited(index);
-          continue;
-        }
-
-        const path = [`M ${x} ${y}`];
-        floodFill(x, y, color, path);
-        path.push("Z");
-        paths.push(`<path d="${path.join(" ")}" fill="rgb(${color.join(",")})" stroke="rgb(${color.join(",")})" stroke-width="2" stroke-linecap="round"  />`);
-      }
-    }
-
-    setSvgData(paths.join("\n"));
-    isConvertRef.current = false;
-    console.timeEnd("generate svg");
   };
 
   useEffect(() => {

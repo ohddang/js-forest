@@ -12,6 +12,9 @@ export default function Sidebar() {
           <NavLink to="/svgconverter" className={({ isActive }) => `${isActive ? "font-bold text-sky-300" : " hover:text-gray-300"}`}>
             SVG Converter
           </NavLink>
+          <NavLink to="/svgconverter-worker" className={({ isActive }) => `${isActive ? "font-bold text-sky-300" : " hover:text-gray-300"}`}>
+            SVG Converter(W)
+          </NavLink>
           <p>...</p>
         </div>
       </div>
